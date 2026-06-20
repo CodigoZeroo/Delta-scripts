@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Mi Web Interactiva</title>
+  <script src="https://jsdelivr.net"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+    .oculto { display: none; }
+    .interaccion { margin: 20px 0; padding: 15px; border: 1px solid #ccc; }
+    .comentario { background: #f4f4f4; padding: 10px; margin: 5px 0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <!-- SECCIÓN DE AUTENTICACIÓN -->
+  <div id="seccion-auth" class="interaccion">
+    <h3>Iniciar Sesión / Registrarse</h3>
+    <input type="email" id="email" placeholder="Tu correo electrónico">
+    <input type="password" id="password" placeholder="Tu contraseña">
+    <button onclick="registrarme()">Registrarse</button>
+    <button onclick="iniciarSesion()">Ingresar</button>
+  </div>
+
+  <div id="seccion-usuario" class="interaccion oculto">
+    <p>Bienvenido: <span id="user-email"></span></p>
+    <button onclick="cerrarSesion()">Cerrar Sesión</button>
+  </div>
+
+  <!-- SECCIÓN DE LIKES / DISLIKES -->
+  <div class="interaccion">
+    <h3>¿Qué te parece esta página?</h3>
+    <button onclick="reaccionar('like')">👍 Likes (<span id="count-likes">0</span>)</button>
+    <button onclick="reaccionar('dislike')">👎 Dislikes (<span id="count-dislikes">0</span>)</button>
+  </div>
+
+  <!-- SECCIÓN DE COMENTARIOS -->
+  <div class="interaccion">
+    <h3>Comentarios</h3>
+    <div id="caja-comentarios">Cargando comentarios...</div>
+    
+    <div id="formulario-comentario" class="oculto" style="margin-top: 15px;">
+      <textarea id="nuevo-comentario" placeholder="Escribe un comentario..." rows="3" style="width: 100%;"></textarea>
+      <button onclick="enviarComentario()">Enviar Comentario</button>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR6d3F5bHdtZ2dtbGNocWpyb2FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5MjAxMDAsImV4cCI6MjA5NzQ5NjEwMH0.v5SEHn-8hwCzJxxsWH54OWSesLoDvdDwpOsNsutFUc4';
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let usuarioActual = null;
+
+    // --- MONITOREAR EL ESTADO DEL USUARIO ---
+    supabase.auth.onAuthStateChange((event, session) => {
+      usuarioActual = session?.user || null;
+      if (usuarioActual) {
+        document.getElementById('seccion-auth').classList.add('oculto');
+        document.getElementById('seccion-usuario').classList.remove('oculto');
+        document.getElementById('formulario-comentario').classList.remove('oculto');
+        document.getElementById('user-email').textContent = usuarioActual.email;
+      } else {
+        document.getElementById('seccion-auth').classList.remove('oculto');
+        document.getElementById('seccion-usuario').classList.add('oculto');
+        document.getElementById('formulario-comentario').classList.add('oculto');
+      }
+    });
+
+    // --- FUNCIONES DE AUTENTICACIÓN ---
+    async function registrarme() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) alert(error.message);
+      else alert('¡Registro exitoso! Revisa tu email para confirmarlo si es necesario.');
+    }
+
+    async function iniciarSesion() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) alert(error.message);
+    }
+
+    async function cerrarSesion() {
+      await supabase.auth.signOut();
+    }
+
+    // --- LIKES Y DISLIKES ---
+    async function cargarReacciones() {
+      const { data } = await supabase.from('reacciones').select('tipo');
+      const likes = data.filter(r => r.tipo === 'like').length;
+      const dislikes = data.filter(r => r.tipo === 'dislike').length;
+      document.getElementById('count-likes').textContent = likes;
+      document.getElementById('count-dislikes').textContent = dislikes;
+    }
+
+    async function reaccionar(tipoReaccion) {
+      if (!usuarioActual) return alert('Debes iniciar sesión para votar');
+      
+      // Intentar insertar o actualizar el voto debido a la restricción UNIQUE de la tabla
+      const { error } = await supabase.from('reacciones').upsert({ 
+        user_id: usuarioActual.id, 
+        tipo: tipoReaccion 
+      }, { onConflict: 'user_id' });
+
+      if (error) console.error(error);
+      cargarReacciones();
+    }
+
+    // --- COMENTARIOS ---
+    async function cargarComentarios() {
+      const { data, error } = await supabase.from('comentarios').select('*').order('created_at', { ascending: false });
+      const contenedor = document.getElementById('caja-comentarios');
+      
+      if (data.length === 0) {
+        contenedor.innerHTML = '<p>No hay comentarios aún. ¡Sé el primero!</p>';
+        return;
+      }
+
+      contenedor.innerHTML = data.map(c => `<div class="comentario">${c.texto}</div>`).join('');
+    }
+
+    async function enviarComentario() {
+      const input = document.getElementById('nuevo-comentario');
+      if (!input.value.trim()) return;
+
+      const { error } = await supabase.from('comentarios').insert({
+        texto: input.value,
+        user_id: usuarioActual.id
+      });
+
+      if (error) alert(error.message);
+      else {
+        input.value = '';
+        cargarComentarios();
+      }
+    }
+
+    // Carga inicial de datos públicos
+    cargarReacciones();
+    cargarComentarios();
+  </script>
+</body>
+</html>
